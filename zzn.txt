@@ -1,0 +1,99 @@
+grcnn代码解剖分析
+--------------------grcnn代码写的比较工整，接口也很方便，可以以后基于此项目进行开发----------------------
+
+注意：在图片中，是以行和列的顺序进行索引的
+      在坐标系中，是以xy的顺序进行索引的（像素坐标系中x指向右方，y指向下方）
+      二者是相反的，x坐标值是第几列，y坐标值是第几行
+
+在q_img中，图像已经被剪裁为224*224的了，因此通过图像的行列转为的xy坐标，需要加上剪裁带来的偏置量，才能得到在像素坐标系下的xy坐标
+
+
+1.在camera.py创建 RealSenseCamera 这个类：
+  类的初始化：相机id，图片尺寸，fps
+  通过 connect 函数配置相机的参数（图片的宽度，高度，fps），获得RGB相机内参和深度传感器内参（depth scale）
+  通过 get_image_bundle 函数将深度图与RGB图对齐 （因为二者的相机坐标系本不在一起），返回对齐后的RGB和depth图像
+
+
+
+2.在camera_data.py创建 CameraData 这个类，目的是将对齐后的图像进行一些预处理：
+  类的初始化：裁剪前的图像尺寸，裁剪后的图像尺寸；裁剪后图像四角的坐标
+  通过 get_depth 函数得到裁剪+归一化后的depth图像
+  通过 get_rgb 函数得到裁剪+归一化后的RGB图像，并将RGB通道移到了第一个维度（以便于和depth进行拼接）
+  通过 get_data 函数将RGB和depth图像拼接为RGB-D图像
+
+
+3.在image.py中定义了Image类
+  包括一些对图像的处理函数，包括裁剪，归一化，resize，rotate，show等
+
+4.在post_process.py中定义了post_process_output函数
+  目的是将网路输出的raw output进行处理，转为numpy格式，删除单维度，并对图像进行高斯滤波
+  高斯滤波中，参数为sigma，参数越大滤波效果越明显
+
+5.在grasp.py中定义了detect_grasps函数
+  目的是找到 质量热力图中的极大值点（xy坐标），然后根据坐标分别得到相应的抓取角度和抓取宽度
+  这里得到的宽度，又除以2得到width，还不太清楚
+
+6.制作数据集是关键之一！
+  Cornell数据集中包含了作为真值的抓取点坐标和抓取角度
+  grasp.py中as_gr函数通过设置length和width进一步得到抓取矩形框（Ground Truth）
+                                                      （通过grasp.py中的Grasp类中的as_gr函数）
+  有了矩形框后，进一步得到矩形框内所有点的坐标（通过Grasp类中的polygon_coords函数）
+  将矩形框的长度length缩短为1/3，宽度不变，得到紧凑的抓取点的坐标（通过GraspRectangle类中的compact_polygon_coords函数）
+ （解释：紧凑使得上一步的点都落在物体内部，成为了抓取点）
+  有了这些抓取点的坐标，我们就可以让质量图中对应抓取点的地方值为1，           （通过GraspRectangles类中的draw函数）
+                                让角度图中对应抓取点的地方值为抓取角度，
+                                让宽度图中对应抓取点的地方值为length
+
+
+ ------这种制作数据集的方法，我们可以稍加修改后适配到后面的our method中------
+
+7.在utils/data下的cornell_data.py中CornellDataset类继承了grasp_data.py中的GraspDatasetBase类
+  后者又继承了torch.utils.data.Dataset
+  值得注意的是在GraspDatasetBase类中定义了一个__getitem__函数
+  目的是在通过CornellDataset类实例化一个数据集的时候，这个实例对象便可以通过idx来索引内部的每一项
+  索引的是__getitem__的返回值 x, (pos, cos, sin, width), idx, rot, zoom_factor
+                                x：RGB-D图像，(pos, cos, sin, width)：真值
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+如果一个py文件中有很多个类Class，那么import时是从文件夹import该py文件名
+例如from utils.dataset_processing import image
+然后使用image. + class 名
+如果一个py文件中只有一个类Class，那么import时是沿着文件夹到该py文件顺序直接import该类，例如
+from hardware.camera import RealSenseCamera
+
